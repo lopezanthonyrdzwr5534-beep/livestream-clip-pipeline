@@ -117,6 +117,9 @@ def main():
                     help="silence margin kept around speech (auto-editor -m)")
     ap.add_argument("--edit", default=None,
                     help='auto-editor edit mode, e.g. "audio:threshold=0.005"')
+    ap.add_argument("--fps", default="30",
+                    help="normalize cut fps; auto-editor v29 inserts black "
+                         "frames at cuts on 60fps sources (default 30)")
     ap.add_argument("--keep-raw", action="store_true",
                     help="keep pre-silence-cut intermediate files")
     ap.add_argument("--dry-run", action="store_true")
@@ -168,7 +171,7 @@ def main():
                "-ss", f"{pre}", "-i", a.src]
         if ss > pre:
             cmd += ["-ss", f"{ss - pre}"]
-        cmd += ["-t", f"{dur}",
+        cmd += ["-t", f"{dur}", "-r", a.fps,
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
                 "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", raw]
         cut = subprocess.run(cmd, env=env)
