@@ -69,4 +69,4 @@ manifest 为 TSV，每行 `开始<TAB>结束<TAB>输出名`，时间码支持 `h
 
 ## License
 
-MIT（建议；未在仓库内附 LICENSE 文件，发布前可自行补充）
+[MIT](LICENSE) — © 2026 lopezanthonyrdzwr5534-beep
