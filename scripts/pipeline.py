@@ -159,13 +159,19 @@ def main():
             summary.append((name, dur, None, None))
             continue
 
-        # 1) frame-accurate cut via FFmpeg (input seek + transcode)
-        cut = subprocess.run(
-            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-             "-ss", f"{ss}", "-i", a.src, "-t", f"{dur}",
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", raw],
-            env=env)
+        # 1) frame-accurate cut via FFmpeg with preroll: seek ~3s early so the
+        #    target frames have complete HEVC reference chains, then drop the
+        #    preroll with an output-side -ss (prevents black/corrupt head frames
+        #    on long-GOP sources like livestream .ts)
+        pre = max(0.0, ss - 3.0)
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+               "-ss", f"{pre}", "-i", a.src]
+        if ss > pre:
+            cmd += ["-ss", f"{ss - pre}"]
+        cmd += ["-t", f"{dur}",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", raw]
+        cut = subprocess.run(cmd, env=env)
         if cut.returncode or not os.path.isfile(raw):
             print(f"    !! ffmpeg cut FAILED rc={cut.returncode}")
             continue
