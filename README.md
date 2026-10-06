@@ -28,7 +28,7 @@ Works without any AI assistant, once you have a manifest:
 python scripts/pipeline.py --src REC.mp4 --manifest clips.tsv --outdir OUT/ --dry-run
 ```
 
-`clips.tsv` — one clip per line: `start<TAB>end<TAB>name`; timestamps in SRT form (`hh:mm:ss,ms` or `hh:mm:ss.ms`); `#` lines ignored.
+`clips.tsv` — one range per line: `start<TAB>end<TAB>name`; timestamps in SRT form (`hh:mm:ss,ms` or `hh:mm:ss.ms`); `#` lines ignored. Lines sharing the same `name` are cut and concatenated into one clip (multi-range keep-cut for refined editing).
 Tuning: `--margin 0.4s` (cuts too choppy → raise), `--edit "audio:threshold=0.005"` (silence left → raise), `--keep-raw` (debug), `--dry-run`.
 
 ## Design notes (field-tested)
@@ -58,7 +58,7 @@ Tuning: `--margin 0.4s` (cuts too choppy → raise), `--edit "audio:threshold=0.
 python scripts/pipeline.py --src REC.mp4 --manifest clips.tsv --outdir OUT/
 ```
 
-manifest 为 TSV，每行 `开始<TAB>结束<TAB>输出名`，时间码支持 `hh:mm:ss,ms` 或 `hh:mm:ss.ms`。常用参数：`--margin 0.4s`（防剪碎）、`--edit "audio:threshold=0.005"`（多剪）、`--keep-raw`（排查）、`--dry-run`（先验）。
+manifest 为 TSV，每行 `开始<TAB>结束<TAB>输出名`，时间码支持 `hh:mm:ss,ms` 或 `hh:mm:ss.ms`；**同名的多行会各自截取再拼接为一条成片**（精剪保留段用法）。常用参数：`--margin 0.4s`（防剪碎）、`--edit "audio:threshold=0.005"`（多剪）、`--keep-raw`（排查）、`--dry-run`（先验）。
 
 **设计约束（实测沉淀）**：
 
