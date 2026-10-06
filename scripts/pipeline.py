@@ -2,9 +2,11 @@
 """Livestream clip pipeline: cut clips by SRT timestamps (FFmpeg) then remove
 silence/breaths (auto-editor) in one deterministic pass.
 
-Manifest = TSV, one clip per line:  start<TAB>end<TAB>name
+Manifest = TSV, one RANGE per line:  start<TAB>end<TAB>name
   start/end : SRT timestamps, hh:mm:ss,ms or hh:mm:ss.ms (comma or dot both OK)
   name      : output base name WITHOUT extension, e.g. 01-转行收入账
+  Multiple lines sharing the SAME name are cut in order and concatenated into
+  one clip (keep-range editing for "refined cut" workflows).
   Lines starting with '#', 'start\t'/'起始' headers, or blank are skipped.
 
 Usage:
@@ -106,6 +108,24 @@ def parse_manifest(path):
     return rows
 
 
+def cut_range(src, ss, dur, out, fps, env):
+    """Frame-accurate cut with ~3s preroll: seek early so target frames have
+    complete HEVC reference chains, then drop the preroll with an output-side
+    -ss (prevents black/corrupt head frames on long-GOP sources like .ts).
+    Also normalizes fps — auto-editor v29 inserts black frames at cuts on
+    60fps sources."""
+    pre = max(0.0, ss - 3.0)
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-ss", f"{pre}", "-i", src]
+    if ss > pre:
+        cmd += ["-ss", f"{ss - pre}"]
+    cmd += ["-t", f"{dur}", "-r", fps,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out]
+    r = subprocess.run(cmd, env=env)
+    return (not r.returncode) and os.path.isfile(out)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", required=True)
@@ -118,8 +138,7 @@ def main():
     ap.add_argument("--edit", default=None,
                     help='auto-editor edit mode, e.g. "audio:threshold=0.005"')
     ap.add_argument("--fps", default="30",
-                    help="normalize cut fps; auto-editor v29 inserts black "
-                         "frames at cuts on 60fps sources (default 30)")
+                    help="normalize cut fps (default 30; see black-frame note)")
     ap.add_argument("--keep-raw", action="store_true",
                     help="keep pre-silence-cut intermediate files")
     ap.add_argument("--dry-run", action="store_true")
@@ -139,6 +158,10 @@ def main():
     if not rows:
         sys.exit("ERROR: manifest produced no clips (need start<TAB>end<TAB>name)")
 
+    groups = {}
+    for start, end, name in rows:
+        groups.setdefault(name, []).append((start, end))
+
     work = os.path.join(a.outdir, ".work")
     os.makedirs(a.outdir, exist_ok=True)
     if not a.dry_run:
@@ -146,41 +169,60 @@ def main():
 
     print(f"SRC      : {a.src}")
     print(f"OUTDIR   : {a.outdir}")
-    print(f"CLIPS    : {len(rows)}   margin={a.margin}\n")
+    print(f"CLIPS    : {len(groups)} ({len(rows)} ranges)   margin={a.margin}\n")
 
     summary = []
-    for i, (start, end, name) in enumerate(rows, 1):
-        ss, to = to_sec(start), to_sec(end)
-        dur = to - ss
-        if dur <= 0:
-            print(f"[{i}] SKIP {name}: end<=start ({start}..{end})")
+    for i, (name, spans) in enumerate(groups.items(), 1):
+        valid, total = [], 0.0
+        for start, end in spans:
+            try:
+                ss, to = to_sec(start), to_sec(end)
+            except ValueError:
+                print(f"[{i}] SKIP {name}: bad timestamp ({start}..{end})")
+                continue
+            if to - ss <= 0:
+                print(f"[{i}] SKIP {name}: end<=start ({start}..{end})")
+                continue
+            valid.append((ss, to))
+            total += to - ss
+        if not valid:
             continue
-        raw = os.path.join(work, f"{name}__raw.mp4")
         final = os.path.join(a.outdir, f"{name}.mp4")
-        print(f"[{i}] {name}  {start} -> {end}  (span {mmss(dur)})")
+        tag = "" if len(valid) == 1 else f"  [{len(valid)} ranges]"
+        print(f"[{i}] {name}  (span {mmss(total)}){tag}")
         if a.dry_run:
-            summary.append((name, dur, None, None))
+            summary.append((name, total, None, None))
             continue
 
-        # 1) frame-accurate cut via FFmpeg with preroll: seek ~3s early so the
-        #    target frames have complete HEVC reference chains, then drop the
-        #    preroll with an output-side -ss (prevents black/corrupt head frames
-        #    on long-GOP sources like livestream .ts)
-        pre = max(0.0, ss - 3.0)
-        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-               "-ss", f"{pre}", "-i", a.src]
-        if ss > pre:
-            cmd += ["-ss", f"{ss - pre}"]
-        cmd += ["-t", f"{dur}", "-r", a.fps,
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-                "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", raw]
-        cut = subprocess.run(cmd, env=env)
-        if cut.returncode or not os.path.isfile(raw):
-            print(f"    !! ffmpeg cut FAILED rc={cut.returncode}")
+        # 1) cut each keep-range, then concat
+        parts = []
+        ok = True
+        for k, (ss, to) in enumerate(valid):
+            part = os.path.join(work, f"{name}__p{k:02d}.mp4")
+            if not cut_range(a.src, ss, to - ss, part, a.fps, env):
+                print(f"    !! ffmpeg cut FAILED at range {k + 1}")
+                ok = False
+                break
+            parts.append(part)
+        if not ok:
             continue
-        raw_dur = duration_of(raw, env)
+        raw = parts[0]
+        if len(parts) > 1:
+            listf = os.path.join(work, f"{name}__list.txt")
+            with open(listf, "w", encoding="utf-8") as f:
+                for p in parts:
+                    f.write(f"file '{os.path.basename(p)}'\n")
+            raw = os.path.join(work, f"{name}__raw.mp4")
+            r = subprocess.run(
+                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                 "-f", "concat", "-safe", "0", "-i", listf,
+                 "-c", "copy", raw], env=env, cwd=work)
+            if r.returncode or not os.path.isfile(raw):
+                print("    !! concat FAILED")
+                continue
 
         # 2) remove silence/breaths via auto-editor
+        raw_dur = duration_of(raw, env)
         ae_cmd = ae_prefix + [raw, "-o", final, "--no-open", "-m", a.margin]
         if a.edit:
             ae_cmd += ["--edit", a.edit]
@@ -192,21 +234,25 @@ def main():
             final_dur = raw_dur
         else:
             final_dur = duration_of(final, env)
-            if not a.keep_raw:
-                os.remove(raw)
 
+        if not a.keep_raw:
+            for p in parts + [raw]:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
         removed = (raw_dur - final_dur) if raw_dur and final_dur else None
         print(f"    raw {mmss(raw_dur)}  ->  trimmed {mmss(final_dur)}"
               f"   (-{mmss(removed) if removed is not None else '?'})")
-        summary.append((name, dur, raw_dur, final_dur))
+        summary.append((name, total, raw_dur, final_dur))
 
     if a.dry_run:
         print("\n(dry-run: nothing written)")
         return
 
     print("\n=== RESULT ===")
-    for name, dur, raw_dur, final_dur in summary:
-        print(f"{name:<24} span {mmss(dur)}  raw {mmss(raw_dur)}  "
+    for name, total, raw_dur, final_dur in summary:
+        print(f"{name:<24} span {mmss(total)}  raw {mmss(raw_dur)}  "
               f"final {mmss(final_dur)}")
     if not a.keep_raw and os.path.isdir(work):
         try:
