@@ -29,7 +29,7 @@ python scripts/pipeline.py --src REC.mp4 --manifest clips.tsv --outdir OUT/ --dr
 ```
 
 `clips.tsv` — one range per line: `start<TAB>end<TAB>name`; timestamps in SRT form (`hh:mm:ss,ms` or `hh:mm:ss.ms`); `#` lines ignored. Lines sharing the same `name` are cut and concatenated into one clip (multi-range keep-cut for refined editing).
-Tuning: `--margin 0.4s` (cuts too choppy → raise), `--edit "audio:threshold=0.005"` (silence left → raise), `--keep-raw` (debug), `--dry-run`.
+Tuning: `--margin 0.4s` (cuts too choppy → raise), `--edit "audio:threshold=0.005"` (silence left → raise), `--fps 30` (keep the default; only raise it if you truly need native frame rate and will check for black frames), `--keep-raw` (debug), `--dry-run`.
 
 ## Design notes (field-tested)
 
@@ -37,6 +37,7 @@ Tuning: `--margin 0.4s` (cuts too choppy → raise), `--edit "audio:threshold=0.
 - A clip counts as trimmed only if `final < raw`; report honestly when a span holds no detectable silence.
 - Flag >30% removal per clip for a spot-check so speech never gets chopped.
 - For transcripts over ~2h, let a sub-task read the whole thing and return only the ranked table.
+- **Black frames** (each one cost a re-render before the script handled it): cuts are normalized to `--fps 30` because auto-editor v29 inserts black frames at its cut points on 60fps sources; a preroll seek absorbs the black head that long-GOP HEVC/TS recordings show after a cold seek; and every finished clip goes through a `blackdetect=d=0.02` pass that trims away black lying within 1s of either edge.
 
 ---
 
@@ -58,7 +59,7 @@ Tuning: `--margin 0.4s` (cuts too choppy → raise), `--edit "audio:threshold=0.
 python scripts/pipeline.py --src REC.mp4 --manifest clips.tsv --outdir OUT/
 ```
 
-manifest 为 TSV，每行 `开始<TAB>结束<TAB>输出名`，时间码支持 `hh:mm:ss,ms` 或 `hh:mm:ss.ms`；**同名的多行会各自截取再拼接为一条成片**（精剪保留段用法）。常用参数：`--margin 0.4s`（防剪碎）、`--edit "audio:threshold=0.005"`（多剪）、`--keep-raw`（排查）、`--dry-run`（先验）。
+manifest 为 TSV，每行 `开始<TAB>结束<TAB>输出名`，时间码支持 `hh:mm:ss,ms` 或 `hh:mm:ss.ms`；**同名的多行会各自截取再拼接为一条成片**（精剪保留段用法）。常用参数：`--margin 0.4s`（防剪碎）、`--edit "audio:threshold=0.005"`（多剪）、`--fps 30`（保持默认即可；确需原帧率再改，并自行检查黑帧）、`--keep-raw`（排查）、`--dry-run`（先验）。
 
 **设计约束（实测沉淀）**：
 
@@ -66,6 +67,7 @@ manifest 为 TSV，每行 `开始<TAB>结束<TAB>输出名`，时间码支持 `h
 - 成片必须 `剪后 < 截出` 才算剪到东西；相等时如实报告"该段无可剪静音"，不得谎称已剪。
 - 剪除比例超过 30% 的切片单独提示抽看，防止把话剪碎。
 - 超长转录（>2 小时）的通读交给子任务，主线只接收排序后的选段表。
+- **黑帧**（每一条都先踩过坑才写进脚本）：截段统一归一化为 `--fps 30`，因为 auto-editor v29 在 60fps 源上会在自己的剪切点插入黑帧；长 GOP 的 HEVC/TS 源冷启动定位会出黑头，脚本用预滚（preroll）seek 规避；成片还会跑一遍 `blackdetect=d=0.02`，把落在首尾 1s 内的黑帧就地复剪掉。
 
 ## License
 
