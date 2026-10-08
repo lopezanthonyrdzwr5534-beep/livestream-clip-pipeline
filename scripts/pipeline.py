@@ -13,7 +13,7 @@ Usage:
   python pipeline.py --src REC.mp4 --manifest clips.tsv --outdir OUTDIR \
       [--margin 0.2s] [--edit "audio:threshold=0.005"] [--keep-raw] [--dry-run]
 """
-import argparse, glob, os, subprocess, sys, shutil
+import argparse, glob, os, re, subprocess, sys, shutil
 
 try:  # keep Chinese clip names readable on GBK consoles
     sys.stdout.reconfigure(encoding="utf-8")
@@ -78,7 +78,8 @@ def duration_of(path, env):
         out = subprocess.run(
             [probe, "-v", "error", "-show_entries", "format=duration",
              "-of", "default=nw=1:nk=1", path],
-            capture_output=True, text=True, env=env).stdout.strip()
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", env=env).stdout.strip()
         return float(out)
     except Exception:
         return None
@@ -124,6 +125,44 @@ def cut_range(src, ss, dur, out, fps, env):
             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out]
     r = subprocess.run(cmd, env=env)
     return (not r.returncode) and os.path.isfile(out)
+
+
+def fix_head_tail_black(final, env):
+    """auto-editor v29 may emit a 1-frame head / short tail black at output
+    edges; detect and re-trim. Only touches blacks within 1s of either edge."""
+    dur = duration_of(final, env)
+    if not dur:
+        return
+    try:
+        p = subprocess.run(["ffmpeg", "-hide_banner", "-i", final, "-vf",
+                            "blackdetect=d=0.02", "-an", "-f", "null", "-"],
+                           capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", env=env)
+        det = p.stderr
+    except Exception:
+        return
+    if not det:  # stderr undecodable/empty -> nothing we can safely act on
+        return
+    ss = tl = 0.0
+    for m in re.finditer(r'black_start:([\d.]+) black_end:([\d.]+)', det):
+        s, e = float(m[1]), float(m[2])
+        if s < 1.0 and e - s <= 1.0:
+            ss = max(ss, e + 0.04)
+        if e > dur - 1.0 and dur - s <= 1.0:
+            tl = max(tl, dur - s + 0.1)
+    if not (ss or tl):
+        return
+    tmp = final + ".fix.mp4"
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+    if ss:
+        cmd += ["-ss", f"{ss}"]
+    cmd += ["-i", final, "-t", f"{max(1.0, dur - ss - tl)}",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", tmp]
+    r = subprocess.run(cmd, env=env)
+    if not r.returncode and os.path.isfile(tmp):
+        os.replace(tmp, final)
+        print("    (auto-fixed edge black frames)")
 
 
 def main():
@@ -233,6 +272,8 @@ def main():
             shutil.copy(raw, final)
             final_dur = raw_dur
         else:
+            final_dur = duration_of(final, env)
+            fix_head_tail_black(final, env)
             final_dur = duration_of(final, env)
 
         if not a.keep_raw:
