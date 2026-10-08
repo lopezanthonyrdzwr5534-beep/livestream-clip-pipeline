@@ -252,12 +252,16 @@ def main():
                 for p in parts:
                     f.write(f"file '{os.path.basename(p)}'\n")
             raw = os.path.join(work, f"{name}__raw.mp4")
+            # cwd=work lets the list's relative 'file' entries resolve, so the
+            # concat list itself and the output must be passed as ABSOLUTE paths
+            # (a relative outdir otherwise silently pointed at OUT/.work/OUT/...).
             r = subprocess.run(
                 ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                 "-f", "concat", "-safe", "0", "-i", listf,
-                 "-c", "copy", raw], env=env, cwd=work)
+                 "-f", "concat", "-safe", "0", "-i", os.path.abspath(listf),
+                 "-c", "copy", os.path.abspath(raw)], env=env, cwd=work)
             if r.returncode or not os.path.isfile(raw):
-                print("    !! concat FAILED")
+                err = (r.stderr or b"").decode("utf-8", "replace").strip()
+                print(f"    !! concat FAILED: {err[-160:]}")
                 continue
 
         # 2) remove silence/breaths via auto-editor
@@ -266,9 +270,11 @@ def main():
         if a.edit:
             ae_cmd += ["--edit", a.edit]
         trim = subprocess.run(ae_cmd, env=env, stdout=subprocess.DEVNULL,
-                              stderr=subprocess.DEVNULL)
+                              stderr=subprocess.PIPE)
         if trim.returncode or not os.path.isfile(final):
-            print(f"    !! auto-editor FAILED rc={trim.returncode} (kept raw)")
+            err = (trim.stderr or b"").decode("utf-8", "replace")
+            hint = " | ".join(ln.strip() for ln in err.splitlines() if ln.strip())[-160:]
+            print(f"    !! auto-editor FAILED rc={trim.returncode} (kept raw): {hint}")
             shutil.copy(raw, final)
             final_dur = raw_dur
         else:
