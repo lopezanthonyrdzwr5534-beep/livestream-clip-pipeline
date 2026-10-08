@@ -98,7 +98,8 @@ contract, and keep only its ranked table in the main context.
 
 ### Step 2 — Manifest
 
-TSV, one clip per line (chronological order is fine; the rank lives in the name):
+TSV, one **range** per line (chronological order is fine; the rank lives in the
+name):
 
 ```text
 00:02:38,766	00:07:18,733	06-报名不学到期我不管
@@ -107,12 +108,19 @@ TSV, one clip per line (chronological order is fine; the rank lives in the name)
 start/end = exact SRT cue times (comma or dot milliseconds); name = no
 extension. `#` lines ignored.
 
+**Multi-range keep-cut**: repeated lines carrying the **same name** are cut
+separately in manifest order and concatenated into one finished clip — the way
+to express a refined edit that keeps several spans of a single story while
+dropping the weak parts in between. List the ranges chronologically and repeat
+the name string exactly; the number of clips equals the number of distinct
+names.
+
 ### Step 3 — Run the pipeline
 
 ```text
 python "<skill-dir>/scripts/pipeline.py" \
     --src "REC.mp4" --manifest "clips.tsv" --outdir "OUTDIR" \
-    [--margin 0.2s] [--edit "audio:threshold=0.005"] [--keep-raw] [--dry-run]
+    [--margin 0.2s] [--edit "audio:threshold=0.005"] [--fps 30] [--keep-raw] [--dry-run]
 ```
 
 Per clip: FFmpeg cut [start→end] (input-seek + re-encode, frame-accurate) →
@@ -122,17 +130,32 @@ background task for long sources and monitor the output directory. Choppy /
 words clipped → raise `--margin` (e.g. 0.4s); breaths still audible → raise the
 threshold via `--edit`.
 
+Black-frame defences are built in — all three came from real 60fps/HEVC
+livestream sources:
+
+- Cuts are normalized to `--fps 30` (default): auto-editor v29 inserts black
+  frames at its own cut points when the source is 60fps.
+- A preroll seek absorbs the black head that long-GOP HEVC/TS files produce when
+  seeking straight to a keyframe-remote timestamp.
+- After trimming, each finished clip is scanned with `blackdetect=d=0.02`; any
+  black lying within 1s of either edge is cut away and the clip re-encoded in
+  place (the printed final duration reflects the fix).
+
+Suspect a clip starts or ends on black → check it yourself with
+`ffmpeg -i CLIP -vf blackdetect=d=0.02 -f null -` rather than eyeballing frames.
+
 ### Step 4 — Verify & report
 
 Every clip must exist with `final < raw`. If final ≈ raw, that span had no
 detectable silence — say so, never claim a trim. Report a ranked table:
 file link | 星级 | span | raw | final | removed (+ price tier only if the
-profile defines one). Flag removal ratios over ~30% for a spot-check.
+profile defines one). Flag removal ratios over ~30% for a spot-check, and flag
+any clip the pipeline reported as black-frame-fixed for a quick watch.
 
 ## Resources
 
-- `scripts/pipeline.py` — manifest-driven cut (FFmpeg) + silence removal
-  (auto-editor) + duration report; UTF-8 one-liners per clip; auto-locates
-  both tools.
+- `scripts/pipeline.py` — manifest-driven cut (FFmpeg, multi-range concat) +
+  silence removal (auto-editor) + edge black-frame auto-fix + duration report;
+  UTF-8 one-liners per clip; auto-locates both tools.
 - `selection-profile.md` — created by the first-use interview; afterwards it
   is the authority for criteria and defaults.
