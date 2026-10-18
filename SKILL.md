@@ -96,6 +96,82 @@ with weak candidates. Titles follow the profile's style. For transcripts over
 ~2 hours, delegate the full read to a subagent holding the profile + output
 contract, and keep only its ranked table in the main context.
 
+### Step 1a — Segments the host asks for on air (always deliver them)
+
+Streamers sometimes break mid-story and address the editor directly: "this part,
+editor, cut it out for me", "put a marker here", "I'll turn this into a clip".
+Those passages are **delivered unconditionally** — they outrank the duration band,
+the clip count and the no-overlap rule, because they are the source's own editorial
+intent.
+
+- Scan the whole transcript for the request wording first and list **every** hit.
+  One stream typically contains two or three; stopping at the first miss is a
+  delivery failure.
+- Filter noise: words like "marker/standard/target" appear in ordinary speech
+  (grading standards, marking a student's work, "cutting nails"). Read the three
+  cues around each hit before deciding.
+- **The request line is not the start of the segment.** When the host says "that
+  part just now", the passage began tens of seconds or minutes earlier: walk back
+  to the topic's real first line (skip a false start that was interrupted by
+  another question and then re-spoken) and forward to the topic's own closing
+  line, not the next question.
+- Cut profanity inside such a segment with multi-range keep-cut anyway; short as
+  it may be, still deliver it.
+
+### Step 1b — Cut points come from meaning, not from silence
+
+Splitting blocks at gaps >4s is a cheap way to find candidate ranges — and a bad
+way to place a cut. Hosts pause mid-topic (to read the chat, drink, think), so an
+acoustic boundary often sits inside a sentence.
+
+- Place the cut on a **topic-turn line** ("now let me talk about the second
+  year…", "next question", "as for the fourth year…"), and keep the topic's own
+  wrap-up lines with it — a summary or punch that follows a long pause is still
+  part of the previous topic.
+- Any boundary you invent yourself (splitting a long block, merging two, tightening
+  a head or tail) gets the **same verification as delegated candidates**: print the
+  three cues before and after each edge. Skipping this produced clips where one
+  sentence's first half ended clip A and its second half opened clip B.
+- When a long block must be split for length, say so in the report ("these two
+  clips join back into one complete X") — let the editor decide, don't silently
+  trade a complete story for a duration rule.
+- Beware off-by-one in gap scans: a gap between cue N and N+1 starts the new block
+  at **N+1**.
+
+### Step 1c — Seven admission checks before a candidate enters the manifest
+
+Fail any one and you fix the boundary or drop the candidate:
+
+1. The opening cue is the topic's **first** line — read the two cues before it; if
+   the line before is the hook that announces the story ("let me tell you
+   something"), include it.
+2. Opening cue, title and one-line summary all describe **the same thing**. If the
+   summary describes material from the middle or end of the range, the start is
+   too early and the first minute belongs to a different question.
+3. The closing cue is a **complete** line that ends the topic (summary, punchline,
+   challenge) — never a bare "mm"/"yeah" or a half clause; read the two cues after it.
+4. Duration fits the profile band after budgeting **`final ≈ span × 0.7`** (see Step 3).
+5. The title contains an anchor that can be found verbatim in the subtitles
+   (a number, a company name, a quoted phrase), and that anchor lands within the
+   first 45% of the clip. Grep for it after writing the title.
+6. No time overlap with already-selected clips or with Step 1a segments.
+7. Profanity / platform-sensitive wording inside the span has been located
+   (grep the range) and either removed as whole cues or the clip dropped.
+
+### Step 1d — Rules for delegating the long read
+
+Handing a 2-hour transcript to a subagent works, but its output is a lead, not a
+decision:
+
+- Ask for **cue indices**; recompute every timestamp, span and duration in the
+  main line. Subagent arithmetic is unreliable (observed: a 9:08 range reported as
+  5:4, and impossible totals).
+- Ask for a one-line summary per candidate and use it to **cross-check the start**
+  (rule 2 above) — the summary often betrays that the range begins too early.
+- Re-read in source any "this is a digression, drop it" suggestion: one such tip
+  would have deleted the most quotable line of the whole clip.
+- Verify profanity line numbers it reports.
+
 ### Step 2 — Manifest
 
 TSV, one **range** per line (chronological order is fine; the rank lives in the
@@ -115,6 +191,26 @@ dropping the weak parts in between. List the ranges chronologically and repeat
 the name string exactly; the number of clips equals the number of distinct
 names.
 
+### Step 2b — Removing spoken junk (whole-cue, text-driven)
+
+Silence trimming cannot remove **said** junk — greetings, restated sentences,
+self-references,求关注 lines — they are speech, so auto-editor keeps them. What to
+remove is defined by the profile; the mechanism is a keep-range edit:
+
+1. List the cues the clip covers (index / start / end / text) and mark the ones the
+   profile's cleanup section calls junk. **If the profile doesn't say what to drop,
+   skip this step — never invent criteria.**
+2. Cut only on **whole-cue boundaries**: drop the marked cue's `[start, end]` out of
+   the kept range. When the junk sits between kept cues, the clip becomes two
+   same-name ranges.
+3. Endpoints always come from the **neighbouring kept cues**, never from the deleted
+   cue's own timecode — that leaves its head or tail in the picture, which matters
+   most on exports where adjacent cues touch exactly.
+4. Leave single filler particles (and anything you're unsure about) to the editor's
+   own NLE pass; chasing them produces a clip with a cut every second.
+5. Ship a "removed cues" list (index + timecode + text) so the editor can check and
+   continue from it.
+
 ### Step 3 — Run the pipeline
 
 ```text
@@ -129,6 +225,15 @@ durations per clip. Always `--dry-run` first; then run real batches as a
 background task for long sources and monitor the output directory. Choppy /
 words clipped → raise `--margin` (e.g. 0.4s); breaths still audible → raise the
 threshold via `--edit`.
+
+**Duration model.** Silence trimming eats 6–40% of a span depending on how much the
+host pauses: measured across three streams the ratio `final / span` came out 0.72,
+0.69 and 0.84, with dialogue/phone-in passages near 0.94 and monologue that keeps
+reading chat messages down near 0.6. Plan with **`final ≈ span × 0.7`** — a
+conservative estimate only ever buys a slightly longer clip, never a too-short one.
+Cut density is a useful cross-check: roughly one cut every 1.6–2.5 s of finished
+video is normal, so a high removal ratio at normal density means long pauses, not
+over-cutting.
 
 Black-frame defences are built in — all three came from real 60fps/HEVC
 livestream sources:
@@ -152,10 +257,29 @@ file link | 星级 | span | raw | final | removed (+ price tier only if the
 profile defines one). Flag removal ratios over ~30% for a spot-check, and flag
 any clip the pipeline reported as black-frame-fixed for a quick watch.
 
+Two gates before you call it delivered:
+
+```text
+python "<skill-dir>/scripts/audit_bounds.py" --dump <transcript.tsv> --manifest clips.tsv[,clips_fix.tsv]
+```
+
+- **Count check**: the number of Step 1a requests found in the transcript must equal
+  the number of host-flagged clips delivered. If they differ, either cut the missing
+  one or state in the report why it wasn't delivered — never drop it silently.
+- **Boundary audit**: run the script above (read-only) and actually read the four
+  lines it prints per clip. It flags `START-MIDSENTENCE` (the opening cue looks like
+  a carry-over half sentence), `END-CLIPPED` (the closing cue isn't finished) and
+  `TITLE-LATE` / `TITLE-ANCHOR` (the title's anchor appears late in the clip, or not
+  at all). It is a tripwire, not a judge: expect the occasional false positive and
+  resolve it by reading, and expect it to catch what formal checks missed — that is
+  exactly why it exists. Pass several manifests and, per clip name, the later file wins.
+
 ## Resources
 
 - `scripts/pipeline.py` — manifest-driven cut (FFmpeg, multi-range concat) +
   silence removal (auto-editor) + edge black-frame auto-fix + duration report;
   UTF-8 one-liners per clip; auto-locates both tools.
+- `scripts/audit_bounds.py` — read-only pre-delivery boundary audit (opening/closing
+  cue lines plus START-MIDSENTENCE / END-CLIPPED / TITLE-LATE flags).
 - `selection-profile.md` — created by the first-use interview; afterwards it
   is the authority for criteria and defaults.

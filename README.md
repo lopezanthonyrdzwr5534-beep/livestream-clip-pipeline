@@ -37,6 +37,25 @@ Tuning: `--margin 0.4s` (cuts too choppy → raise), `--edit "audio:threshold=0.
 - A clip counts as trimmed only if `final < raw`; report honestly when a span holds no detectable silence.
 - Flag >30% removal per clip for a spot-check so speech never gets chopped.
 - For transcripts over ~2h, let a sub-task read the whole thing and return only the ranked table.
+- **Budget duration as `final ≈ span × 0.7`.** Measured across three streams the real ratio swings
+  between 0.69 and 0.84 (phone-in dialogue barely shrinks; monologue that keeps reading chat messages
+  shrinks a lot), so 0.7 is the conservative planning number.
+- **Silence is not a topic boundary.** Gaps >4s narrow candidate ranges only; the cut must land on a
+  topic-turn line. Cutting on a pause has split one sentence across two clips.
+- **Seven admission checks per candidate** before it enters the manifest: the opening cue is the topic's
+  first line; opening cue, title and summary describe the same thing; the closing cue is a complete
+  punchline; the span fits the duration band after the 0.7 budget; the title carries an anchor that is
+  greppable in the subtitles and lands in the first 45% of the clip; no overlap with selected or
+  host-flagged segments; profanity inside the span located and handled.
+- **Segments the host asks for on air are delivered unconditionally** ("editor, cut this part out for
+  me"). Enumerate every such line first — a stream usually has two or three — and remember the request
+  line is rarely where the segment starts.
+- Sub-agents reading long transcripts should return **cue indices only**; recompute timestamps and spans
+  yourself, and re-read every "this is a digression, drop it" suggestion against the source.
+- `scripts/audit_bounds.py` (read-only) prints each clip's two preceding / opening / closing / two
+  following subtitle lines and flags `START-MIDSENTENCE`, `END-CLIPPED`, `TITLE-LATE`. Run it before
+  delivery. It exists because formal checks (half sentences, timecodes, black frames) kept passing while
+  the selection itself was wrong.
 - **Black frames** (each one cost a re-render before the script handled it): cuts are normalized to `--fps 30` because auto-editor v29 inserts black frames at its cut points on 60fps sources; a preroll seek absorbs the black head that long-GOP HEVC/TS recordings show after a cold seek; and every finished clip goes through a `blackdetect=d=0.02` pass that trims away black lying within 1s of either edge.
 
 ---
@@ -68,6 +87,12 @@ manifest 为 TSV，每行 `开始<TAB>结束<TAB>输出名`，时间码支持 `h
 - 剪除比例超过 30% 的切片单独提示抽看，防止把话剪碎。
 - 超长转录（>2 小时）的通读交给子任务，主线只接收排序后的选段表。
 - **黑帧**（每一条都先踩过坑才写进脚本）：截段统一归一化为 `--fps 30`，因为 auto-editor v29 在 60fps 源上会在自己的剪切点插入黑帧；长 GOP 的 HEVC/TS 源冷启动定位会出黑头，脚本用预滚（preroll）seek 规避；成片还会跑一遍 `blackdetect=d=0.02`，把落在首尾 1s 内的黑帧就地复剪掉。
+- **时长按「成片 ≈ 跨度 × 0.7」预算。** 三场实测比值在 0.69–0.84 之间浮动（连麦对话几乎不缩，边念公屏提问边讲的独白段掉得多），所以规划一律按 0.7 保守估——宁可选长一点，也不要剪完才发现不够长。
+- **停顿不等于话题转折。** 相邻字幕停顿 >4 秒只用来圈定候选范围，真正下刀必须落在话题转折句上；按停顿切过，出现过一整句话的前半在 A 片、后半在 B 片。
+- **候选进清单前过七项准入检查**：起点句是本话题第一句（不是上一个提问的承接半句）；起点句·标题·内容概括三者说的是同一件事；终点句是完整收口（不能停在"嗯"这种单字条或半句上）；按 ×0.7 折算后落在时长档内；标题含一个能在字幕里逐字搜到的锚点、且出现在全片前 45%；不与已选段和点名段重叠；段内脏话敏感词已定位并决定删或弃。
+- **主播在直播里点名要剪的段落一律交付。** 他常中途喊"这段那个剪辑帮我剪出来啊/打个标记"；先把全场命中行列全（一场通常有两三处），再往前找该话题真正的第一句——点名句本身几乎不是起点。
+- 子任务通读长转录时**只要字幕序号**：时间码、跨度、时长全部主线自己回查计算（实测它的算术会错）；它标的"可挖掉的岔口"必须回读原文再决定，出现过它把整段最有戏的一句当成岔口建议删掉。
+- `scripts/audit_bounds.py`（只读）把每条的「前 2 句 / 起点句 / 终点句 / 后 2 句」摊出来，并标 `START-MIDSENTENCE`／`END-CLIPPED`／`TITLE-LATE`。交付前必跑——它存在的原因就是：形式检查（半句、时间码、黑帧）全过了，选段照样是错的。
 
 ## License
 
