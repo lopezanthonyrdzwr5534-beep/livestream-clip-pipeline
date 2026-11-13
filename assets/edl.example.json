@@ -1,0 +1,30 @@
+{
+  "_notes": [
+    "Single-segment EDL for the packaging pass: no subtitles, two title lines.",
+    "speed = timeline_seconds / material_seconds. Keep the material at 1.0x and put 1.2 here.",
+    "keep_segments = what survives the whole-cue deletions; deleted cues sit between them.",
+    "events reference assets that already exist in the reference timeline, by name.",
+    "Leave subtitles empty on the first pass: the editor recognises them in the NLE afterwards."
+  ],
+  "name": "01-example-clip",
+  "source": "<your-clips-dir>/clip.mp4",
+  "template_timeline": "<decrypted-reference-timeline>",
+  "canvas": [
+    1080,
+    1920
+  ],
+  "fps": 30,
+  "speed": 1.2,
+  "keep_segments": [
+    {
+      "source_start": 0.0,
+      "source_end": 542.0
+    }
+  ],
+  "subtitles": [],
+  "titles": [
+    "Example title line one",
+    "Example title line two"
+  ],
+  "events": []
+}

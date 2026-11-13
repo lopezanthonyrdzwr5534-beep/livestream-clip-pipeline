@@ -51,6 +51,13 @@ def find(rows, t, col):
     return None
 
 
+def nearest_delta(rows, t, col):
+    """How far a cut sits from the nearest cue edge - cuts should be on edges."""
+    if not rows:
+        return None
+    return min(abs(r[col] - t) for r in rows)
+
+
 def anchors(title):
     """从标题里抽可定位锚点：数字（含单位）与 2 字以上英文。"""
     out = re.findall(r"\d+(?:\.\d+)?(?:万|亿|块|岁|月|日|年|个|种|类|次|遍|分|秒|成|倍|w)?", title)
@@ -73,18 +80,43 @@ def main():
         for ln in open(p, encoding="utf-8"):
             if ln.startswith("#") or not ln.strip():
                 continue
-            c = ln.rstrip("\n").split("\t")
-            if len(c) >= 3:
-                local.setdefault(c[2].strip(), set()).add((sec(c[0]), sec(c[1])))
+            c = [x.strip() for x in ln.rstrip("\n").split("\t")]
+            if len(c) < 3:
+                continue
+            # accept both column orders: the legacy pipeline used start<TAB>end<TAB>name,
+            # the master-time chain writes name<TAB>start<TAB>end
+            def is_time(x):
+                try:
+                    sec(x)
+                    return True
+                except Exception:
+                    return False
+            if is_time(c[0]) and is_time(c[1]):
+                name, st, en = c[2], sec(c[0]), sec(c[1])
+            elif is_time(c[1]) and is_time(c[2]):
+                name, st, en = c[0], sec(c[1]), sec(c[2])
+            else:
+                continue
+            if not name:
+                continue
+            local.setdefault(name, set()).add((st, en))
         clips.update(local)
 
     bad = 0
     for name in sorted(clips):
         rs = sorted(clips[name])
         i0, i1 = find(rows, rs[0][0], 0), find(rows, rs[-1][1], 1)
-        print("=== %s  跨度 %.1f min  %d 段" % (name, (rs[-1][1] - rs[0][0]) / 60, len(rs)))
+        keep = sum(en - st for st, en in rs)
+        print("=== %s  外延 %.1f min ｜ 保留合计 %.1f min ｜ %d 段"
+              % (name, (rs[-1][1] - rs[0][0]) / 60, keep / 60, len(rs)))
+        for bound, idx, col, label in ((rs[0][0], i0, 0, "起点"), (rs[-1][1], i1, 1, "终点")):
+            if idx is not None:
+                continue
+            d = nearest_delta(rows, bound, col)
+            print("    !! %s时间码 %02d:%06.3f 不在字幕边界上（离最近边界 %.2fs）"
+                  "→ 刀口要取相邻保留条的 start/end，否则会留下半句或吃掉一句"
+                  % (label, bound // 60, bound % 60, d if d is not None else -1))
         if i0 is None or i1 is None:
-            print("    !! 时间码在转录里找不到：先核对 SRT 与清单是否同源")
             bad += 1
             continue
         pre = [rows[j][2] for j in range(max(0, i0 - 2), i0)]

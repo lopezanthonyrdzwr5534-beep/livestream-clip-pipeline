@@ -1,0 +1,322 @@
+#!/usr/bin/env python3
+"""Livestream clip pipeline: cut clips by SRT timestamps (FFmpeg) then remove
+silence/breaths (auto-editor) in one deterministic pass.
+
+Manifest = TSV, one RANGE per line:  start<TAB>end<TAB>name
+  start/end : SRT timestamps, hh:mm:ss,ms or hh:mm:ss.ms (comma or dot both OK)
+  name      : output base name WITHOUT extension, e.g. 01-转行收入账
+  Multiple lines sharing the SAME name are cut in order and concatenated into
+  one clip (keep-range editing for "refined cut" workflows).
+  Lines starting with '#', 'start\t'/'起始' headers, or blank are skipped.
+
+Usage:
+  python pipeline.py --src REC.mp4 --manifest clips.tsv --outdir OUTDIR \
+      [--margin 0.2s] [--edit "audio:threshold=0.005"] [--keep-raw] [--dry-run]
+"""
+import argparse, glob, os, re, subprocess, sys, shutil
+
+try:  # keep Chinese clip names readable on GBK consoles
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
+
+def find_ae(cli_path):
+    """Locate the auto-editor executable (or a wrapper script)."""
+    if cli_path:
+        return cli_path
+    ae = shutil.which("auto-editor")
+    if ae:
+        return ae
+    pats = [
+        os.path.join(os.environ.get("APPDATA", ""),
+                     "Python", "Python3*", "Scripts", "auto-editor.exe"),
+        os.path.expanduser("~/.local/bin/auto-editor"),
+        "/usr/local/bin/auto-editor", "/usr/bin/auto-editor",
+    ]
+    for p in pats:
+        hits = glob.glob(p)
+        if hits:
+            return hits[0]
+    sys.exit("ERROR: auto-editor not found. Install: python -m pip install auto-editor"
+             "  (or pass --ae /path/to/ae.sh)")
+
+
+def find_ffmpeg():
+    """Return the directory containing ffmpeg/ffprobe."""
+    ff = shutil.which("ffmpeg")
+    if not ff:
+        hits = glob.glob(os.path.join(
+            os.environ.get("LOCALAPPDATA", ""),
+            "Microsoft/WinGet/Packages", "Gyan.FFmpeg*",
+            "**", "bin", "ffmpeg.exe"), recursive=True)
+        ff = hits[0] if hits else None
+    if not ff:
+        sys.exit("ERROR: ffmpeg not found. Install: winget install Gyan.FFmpeg"
+                 " (or get ffmpeg from https://ffmpeg.org and add to PATH)")
+    return os.path.dirname(ff)
+
+
+def to_sec(ts):
+    """'00:01:02,500' -> 62.5 (float). Accepts comma or dot, hh:mm:ss(.ms)."""
+    ts = ts.strip().replace(",", ".")
+    parts = ts.split(":")
+    if len(parts) == 3:
+        h, m, s = parts
+    elif len(parts) == 2:
+        h, (m, s) = "0", parts
+    else:
+        raise ValueError(f"bad timestamp: {ts!r}")
+    return int(h) * 3600 + int(m) * 60 + float(s)
+
+
+def duration_of(path, env):
+    """Seconds via ffprobe; returns float or None."""
+    probe = shutil.which("ffprobe", path=env.get("PATH")) or os.path.join(
+        env["FFDIR"], "ffprobe" + (".exe" if os.name == "nt" else ""))
+    try:
+        out = subprocess.run(
+            [probe, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", path],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", env=env).stdout.strip()
+        return float(out)
+    except Exception:
+        return None
+
+
+def mmss(sec):
+    if sec is None:
+        return "?"
+    m, s = divmod(int(round(sec)), 60)
+    return f"{m:02d}:{s:02d}"
+
+
+def parse_manifest(path):
+    rows = []
+    with open(path, encoding="utf-8") as f:
+        for ln in f:
+            raw = ln.rstrip("\n")
+            if not raw.strip() or raw.lstrip().startswith("#"):
+                continue
+            cols = raw.split("\t")
+            if len(cols) < 3:
+                continue
+            start, end, name = cols[0], cols[1], "\t".join(cols[2:])
+            if start.lower().startswith(("start", "起始", "入")):
+                continue  # header row
+            rows.append((start.strip(), end.strip(), name.strip()))
+    return rows
+
+
+def cut_range(src, ss, dur, out, fps, env):
+    """Frame-accurate cut with ~3s preroll: seek early so target frames have
+    complete HEVC reference chains, then drop the preroll with an output-side
+    -ss (prevents black/corrupt head frames on long-GOP sources like .ts).
+    Also normalizes fps — auto-editor v29 inserts black frames at cuts on
+    60fps sources."""
+    pre = max(0.0, ss - 3.0)
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-ss", f"{pre}", "-i", src]
+    if ss > pre:
+        cmd += ["-ss", f"{ss - pre}"]
+    cmd += ["-t", f"{dur}", "-r", fps,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out]
+    r = subprocess.run(cmd, env=env)
+    return (not r.returncode) and os.path.isfile(out)
+
+
+def fix_head_tail_black(final, env):
+    """auto-editor v29 may emit a 1-frame head / short tail black at output
+    edges; detect and re-trim. Only touches blacks within 1s of either edge."""
+    dur = duration_of(final, env)
+    if not dur:
+        return
+    try:
+        p = subprocess.run(["ffmpeg", "-hide_banner", "-i", final, "-vf",
+                            "blackdetect=d=0.02", "-an", "-f", "null", "-"],
+                           capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", env=env)
+        det = p.stderr
+    except Exception:
+        return
+    if not det:  # stderr undecodable/empty -> nothing we can safely act on
+        return
+    ss = tl = 0.0
+    for m in re.finditer(r'black_start:([\d.]+) black_end:([\d.]+)', det):
+        s, e = float(m[1]), float(m[2])
+        if s < 1.0 and e - s <= 1.0:
+            ss = max(ss, e + 0.04)
+        if e > dur - 1.0 and dur - s <= 1.0:
+            tl = max(tl, dur - s + 0.1)
+    if not (ss or tl):
+        return
+    tmp = final + ".fix.mp4"
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+    if ss:
+        cmd += ["-ss", f"{ss}"]
+    cmd += ["-i", final, "-t", f"{max(1.0, dur - ss - tl)}",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", tmp]
+    r = subprocess.run(cmd, env=env)
+    if not r.returncode and os.path.isfile(tmp):
+        os.replace(tmp, final)
+        print("    (auto-fixed edge black frames)")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--src", required=True)
+    ap.add_argument("--manifest", required=True)
+    ap.add_argument("--outdir", required=True)
+    ap.add_argument("--ae", default=None,
+                    help="override: path to auto-editor exe or ae.sh wrapper")
+    ap.add_argument("--margin", default="0.2s",
+                    help="silence margin kept around speech (auto-editor -m)")
+    ap.add_argument("--edit", default=None,
+                    help='auto-editor edit mode, e.g. "audio:threshold=0.005"')
+    ap.add_argument("--fps", default="30",
+                    help="normalize cut fps (default 30; see black-frame note)")
+    ap.add_argument("--speed", default=None,
+                    help="speed up the kept footage by this factor in the SAME "
+                         "auto-editor pass (e.g. 1.2, pitch preserved). Leave unset to "
+                         "stay at source speed. Baking it here keeps the delivered file "
+                         "at final speed, so the draft needs no speed segment.")
+    ap.add_argument("--keep-raw", action="store_true",
+                    help="keep pre-silence-cut intermediate files")
+    ap.add_argument("--dry-run", action="store_true")
+    a = ap.parse_args()
+
+    if not os.path.isfile(a.src):
+        sys.exit(f"ERROR: source not found: {a.src}")
+
+    ae_bin = find_ae(a.ae)
+    ae_prefix = ["bash", ae_bin] if ae_bin.endswith(".sh") else [ae_bin]
+    ffdir = find_ffmpeg()
+    env = dict(os.environ)
+    env["PATH"] = env.get("PATH", "") + os.pathsep + ffdir
+    env["FFDIR"] = ffdir
+
+    rows = parse_manifest(a.manifest)
+    if not rows:
+        sys.exit("ERROR: manifest produced no clips (need start<TAB>end<TAB>name)")
+
+    groups = {}
+    for start, end, name in rows:
+        groups.setdefault(name, []).append((start, end))
+
+    work = os.path.join(a.outdir, ".work")
+    os.makedirs(a.outdir, exist_ok=True)
+    if not a.dry_run:
+        os.makedirs(work, exist_ok=True)
+
+    print(f"SRC      : {a.src}")
+    print(f"OUTDIR   : {a.outdir}")
+    print(f"CLIPS    : {len(groups)} ({len(rows)} ranges)   margin={a.margin}\n")
+
+    summary = []
+    for i, (name, spans) in enumerate(groups.items(), 1):
+        valid, total = [], 0.0
+        for start, end in spans:
+            try:
+                ss, to = to_sec(start), to_sec(end)
+            except ValueError:
+                print(f"[{i}] SKIP {name}: bad timestamp ({start}..{end})")
+                continue
+            if to - ss <= 0:
+                print(f"[{i}] SKIP {name}: end<=start ({start}..{end})")
+                continue
+            valid.append((ss, to))
+            total += to - ss
+        if not valid:
+            continue
+        final = os.path.join(a.outdir, f"{name}.mp4")
+        tag = "" if len(valid) == 1 else f"  [{len(valid)} ranges]"
+        print(f"[{i}] {name}  (span {mmss(total)}){tag}")
+        if a.dry_run:
+            summary.append((name, total, None, None))
+            continue
+
+        # 1) cut each keep-range, then concat
+        parts = []
+        ok = True
+        for k, (ss, to) in enumerate(valid):
+            part = os.path.join(work, f"{name}__p{k:02d}.mp4")
+            if not cut_range(a.src, ss, to - ss, part, a.fps, env):
+                print(f"    !! ffmpeg cut FAILED at range {k + 1}")
+                ok = False
+                break
+            parts.append(part)
+        if not ok:
+            continue
+        raw = parts[0]
+        if len(parts) > 1:
+            listf = os.path.join(work, f"{name}__list.txt")
+            with open(listf, "w", encoding="utf-8") as f:
+                for p in parts:
+                    f.write(f"file '{os.path.basename(p)}'\n")
+            raw = os.path.join(work, f"{name}__raw.mp4")
+            # cwd=work lets the list's relative 'file' entries resolve, so the
+            # concat list itself and the output must be passed as ABSOLUTE paths
+            # (a relative outdir otherwise silently pointed at OUT/.work/OUT/...).
+            r = subprocess.run(
+                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                 "-f", "concat", "-safe", "0", "-i", os.path.abspath(listf),
+                 "-c", "copy", os.path.abspath(raw)], env=env, cwd=work)
+            if r.returncode or not os.path.isfile(raw):
+                err = (r.stderr or b"").decode("utf-8", "replace").strip()
+                print(f"    !! concat FAILED: {err[-160:]}")
+                continue
+
+        # 2) remove silence/breaths via auto-editor
+        raw_dur = duration_of(raw, env)
+        ae_cmd = ae_prefix + [raw, "-o", final, "--no-open", "-m", a.margin]
+        if a.edit:
+            ae_cmd += ["--edit", a.edit]
+        if getattr(a, "speed", None):
+            # one pass: silence out, kept footage sped up (pitch preserved).
+            # Doing it here avoids a second encode generation, and the delivered
+            # file ends up at final speed -> the draft adds no speed of its own.
+            ae_cmd += ["--when-normal", f"speed:{a.speed}"]
+        trim = subprocess.run(ae_cmd, env=env, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.PIPE)
+        if trim.returncode or not os.path.isfile(final):
+            err = (trim.stderr or b"").decode("utf-8", "replace")
+            hint = " | ".join(ln.strip() for ln in err.splitlines() if ln.strip())[-160:]
+            print(f"    !! auto-editor FAILED rc={trim.returncode} (kept raw): {hint}")
+            shutil.copy(raw, final)
+            final_dur = raw_dur
+        else:
+            final_dur = duration_of(final, env)
+            fix_head_tail_black(final, env)
+            final_dur = duration_of(final, env)
+
+        if not a.keep_raw:
+            for p in parts + [raw]:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+        removed = (raw_dur - final_dur) if raw_dur and final_dur else None
+        print(f"    raw {mmss(raw_dur)}  ->  trimmed {mmss(final_dur)}"
+              f"   (-{mmss(removed) if removed is not None else '?'})")
+        summary.append((name, total, raw_dur, final_dur))
+
+    if a.dry_run:
+        print("\n(dry-run: nothing written)")
+        return
+
+    print("\n=== RESULT ===")
+    for name, total, raw_dur, final_dur in summary:
+        print(f"{name:<24} span {mmss(total)}  raw {mmss(raw_dur)}  "
+              f"final {mmss(final_dur)}")
+    if not a.keep_raw and os.path.isdir(work):
+        try:
+            os.rmdir(work)
+        except OSError:
+            pass
+
+
+if __name__ == "__main__":
+    main()

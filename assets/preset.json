@@ -1,0 +1,109 @@
+{
+ "canvas": [
+  1080,
+  1920
+ ],
+ "fps": 30,
+ "speed": 1.2,
+ "color": {
+  "name": "调色所有小项",
+  "resource_id": "7416258989467374091",
+  "value": 0.8
+ },
+ "blur": {
+  "name": "模糊",
+  "resource_id": "7399495140399746304",
+  "mask": {
+   "shape": "rectangle",
+   "height_ratio": 0.1459,
+   "center_y": 0.7025,
+   "note": "另一套常见蒙版为 height 0.1507 / centerY 0.6262；以参考工程为准"
+  }
+ },
+ "subtitle": {
+  "font": "细体-思源黑体7号.otf",
+  "size": 12,
+  "color": "#FFFFFF",
+  "y": -0.236,
+  "shadow_alpha": 0.9,
+  "line_max_width": 1.0,
+  "one_line": true,
+  "max_chars": 12,
+  "gap_s": 0.0,
+  "note": "上一条结尾=下一条开头（0 缝），真实长停顿 >1.0s 才留缝，覆盖率 ≥98%",
+  "audit_max_chars": 14
+ },
+ "title": {
+  "font": "仓耳丰黑.ttf",
+  "sizes": [
+   13,
+   12
+  ],
+  "color": "#FFFFFF",
+  "y": [
+   0.7446,
+   0.6231
+  ],
+  "lines": 2
+ },
+ "deletion": {
+  "rate_pct": [
+   5,
+   15
+  ],
+  "categories": [
+   "语气词/无信息",
+   "短插话/半句",
+   "口吃/自我修正",
+   "重复/自我引用",
+   "广告/引流",
+   "内容删减"
+  ],
+  "keep": [
+   "主线判断",
+   "关键例子",
+   "数字/薪资/offer",
+   "结论",
+   "有记忆点的情绪句"
+  ]
+ },
+ "corrections": {
+  "allowed": [
+   "ASR 错词/术语",
+   "代词",
+   "数字/金额错写"
+  ],
+  "amount_format": "chinese",
+  "forbidden": [
+   "改写",
+   "删口癖",
+   "改词序",
+   "口语润色",
+   "其他→其她"
+  ],
+  "one_line": true,
+  "split_at_word_boundary": true,
+  "numeral_rule": "数字写回中文（八千/三十二万/三个月/倒数第二）；985、211、1v1、4A、B站、0offer、百分比、年份月份届别、70后 一律不动"
+ },
+ "sfx": {
+  "density_per_min": [
+   0.3,
+   1.2
+  ],
+  "map": {
+   "truth": "水滴声",
+   "verdict": "字幕音效-嘭",
+   "awkward": "尴尬",
+   "conflict_repeat": "砰，拳击声",
+   "topic_change": "书本翻页声",
+   "joke": "搞笑配音（咚咚咚溜走）",
+   "negative_list": "系统警告",
+   "reveal": "综艺开始 系统音",
+   "advice": "聚光灯"
+  }
+ },
+ "project": {
+  "rule": "one replay = one project; timeline 01 = source; new cuts append as timeline 02+"
+ },
+ "speed_note": "素材保持 1.0×（只剪气口，不烘变速），1.2× 只写在草稿 EDL 的 speed 上，创作者可在剪映里调回 1.0/1.1/1.25。不能既烘进素材又在草稿里设速度段（波形漂移、片尾卡帧的根因）。若明确要求「素材即成品速度」，才用 --speed 1.2 且把 EDL speed 设回 1.0。"
+}

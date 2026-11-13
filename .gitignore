@@ -2,3 +2,4 @@ selection-profile.md
 __pycache__/
 *.pyc
 .work/
+assets/fx_library.json
