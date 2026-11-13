@@ -127,16 +127,24 @@ def find_mask_entry(cache_root: Path, resource_id: str, expected_effect_id: str 
 
 
 def find_package_entry(cache_root: Path, resource_id: str | None = None,
-                       effect_id: str | None = None) -> dict | None:
+                       effect_id: str | None = None,
+                       md5: str | None = None, title: str | None = None) -> dict | None:
     """Look up any effect package (mask, filter, face effect, sound) in JianYing's http_cache.
 
     Same table as find_mask_entry but without the effect_mask requirement: the creator's
     library may reference 聚光灯/满屏问号/飞速计算 packages that got purged from Cache.
+
+    Several items can carry the same common_attr.id (observed: 调色所有小项 and 星形 both
+    under id 7416258989467374091, with different effect_id/md5). Returning the first hit
+    installs the WRONG package, so score every candidate and prefer the one whose md5
+    matches what the draft expects, then a self-consistent effect_id, then the title.
     """
     rid, eid = str(resource_id or ""), str(effect_id or "")
     needle = rid or eid
     if not needle:
         return None
+    want_md5, want_title = str(md5 or ""), str(title or "")
+    best, best_score = None, -1
     for db in iter_rp_dbs(cache_root):
         try:
             con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
@@ -153,20 +161,47 @@ def find_package_entry(cache_root: Path, resource_id: str | None = None,
             items = (data.get("data") or {}).get("effect_item_list") or []
             if isinstance(items, dict):
                 items = [items]
-            for item in items:
-                ca = item.get("common_attr") or {}
+            cands = [item.get("common_attr") or {} for item in items]
+            # The same id also shows up in other response shapes (search results, nested
+            # lists) where the item is NOT under data.effect_item_list. Walk the whole
+            # document for anything that looks like a package record, otherwise the only
+            # candidate found can be a different asset that merely shares the id.
+            def walk(o):
+                if isinstance(o, dict):
+                    if o.get("md5") and (o.get("item_urls") or o.get("url")):
+                        cands.append(o)
+                    for v in o.values():
+                        walk(v)
+                elif isinstance(o, list):
+                    for v in o:
+                        walk(v)
+            walk(data)
+            for ca in cands:
                 if needle not in (str(ca.get("id") or ""), str(ca.get("effect_id") or "")):
                     continue
                 if rid and str(ca.get("id")) != rid and eid and str(ca.get("effect_id")) != eid:
                     continue
                 urls = ca.get("item_urls") or []
-                return {"resource_id": str(ca.get("id") or ""),
-                        "effect_id": str(ca.get("effect_id") or ""),
+                if not urls and ca.get("url"):
+                    urls = [ca["url"]]
+                cand = {"resource_id": str(ca.get("id") or ""),
+                        "effect_id": str(ca.get("effect_id") or ca.get("id") or ""),
                         "md5": str(ca.get("md5") or ""),
                         "url": urls[0] if urls else "",
-                        "title": ca.get("title") or "",
+                        "title": ca.get("title") or ca.get("name") or "",
                         "extra": str(ca.get("extra") or "")}
-    return None
+                score = 0
+                if want_md5 and cand["md5"] == want_md5:
+                    score += 8
+                if rid and cand["effect_id"] == rid:
+                    score += 4
+                if want_title and cand["title"] == want_title:
+                    score += 2
+                if cand["url"]:
+                    score += 1
+                if score > best_score:
+                    best, best_score = cand, score
+    return best
 
 def install_package(entry: dict, cache_root: Path) -> Path:
     effect_id, md5, url = entry["effect_id"], entry["md5"], entry["url"]

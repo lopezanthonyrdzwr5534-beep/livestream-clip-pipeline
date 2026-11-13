@@ -36,7 +36,7 @@ def collect(d: dict) -> list[dict]:
         for m in arr:
             if not isinstance(m, dict):
                 continue
-            kind = ("effect" if (cat == "video_effects" or m.get("video_effect"))
+            kind = ("effect" if (cat in ("video_effects", "effects") or m.get("video_effect"))
                     else "sound" if m.get("type") in ("sound", "music") else None)
             if not kind:
                 continue
@@ -70,7 +70,8 @@ def status_of(it: dict, cache_root: Path, do_restore: bool) -> str:
             return f"已补写 modity_time（{len(files)} 个文件）"
         state = "特效包目录为空或不存在"
 
-    entry = find_package_entry(cache_root, it["resource_id"] or None, it["effect_id"] or None)
+    entry = find_package_entry(cache_root, it["resource_id"] or None, it["effect_id"] or None,
+                               md5=it.get("md5") or None, title=it.get("name") or None)
     if not entry:
         return f"{state}；rp.db 无此 resource_id 记录 → 只能在剪映素材库重新添加"
     if not entry.get("url"):
