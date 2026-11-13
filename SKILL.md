@@ -419,6 +419,16 @@ Quit the NLE completely before running, and restart it afterwards. The same down
 in `build_fx_library.py --repair` (library-wide); `restore_fx.py` works per timeline and also
 repairs the "files present but `_modity_time.txt` missing" case that the NLE refuses to load.
 
+Two traps when auditing the library:
+
+- Test presence with **`Path(path).exists()`** (the same predicate `check_resources.py` uses):
+  sounds are `.mp3` **files**, effects are **directories**, so an `is_dir()` test marks every
+  sound as missing. For a directory also check it is non-empty and that a sibling
+  `<md5>_modity_time.txt` exists, otherwise the NLE will not load it.
+- A download can fail with **403** when the md5 recorded in the draft differs from the newest
+  md5 in the resource database (the asset changed version); the old URL is dead and the only
+  fix is to pick a similar asset by hand.
+
 ### Step 9 — Acceptance
 
 - Timeline 01 unmodified (SHA256 against the copy taken before work started); new timelines
