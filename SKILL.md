@@ -80,7 +80,7 @@ source material):
 3. **Length and count**: target finished length per clip and how many per run (default 5–9).
 
 Then confirm or default the rendering parameters: material speed 1.0×, playback speed in
-the draft (commonly 1.2×), silence margin 0.2s, naming `NN-title-phrase.mp4`, output
+the draft (commonly 1.2×), silence margin 0.15s, naming `NN-title-phrase.mp4`, output
 `<YYYYMMDD>clips/`. Record a pricing convention only if the user has one; otherwise omit
 any price column from reports.
 
@@ -97,7 +97,7 @@ established: <date> | updated: <date> | domain: <domain/use>
 ## Titles and naming
 - title style: ... | file naming: NN-title-phrase.mp4
 ## Rendering
-- material speed: 1.0x | draft speed: 1.2x | margin: 0.2s | threshold: default
+- material speed: 1.0x | draft speed: 1.2x | margin: 0.15s | threshold: default
 - output dir: <YYYYMMDD>clips/
 ## Pricing (optional; delete the section if unused)
 ```
@@ -276,7 +276,7 @@ without re-running these gates.
 
 ```bash
 python scripts/pipeline_mp4.py --src <replay.mp4> --manifest manifest.tsv --outdir out/ \
-    --ae <auto-editor.exe> --margin 0.2s --speed 1.0 --fps 30
+    --ae <auto-editor.exe> --margin 0.15s --speed 1.0 --fps 30
 ```
 
 One pass: FFmpeg cuts each kept range (preroll seek + re-encode) → auto-editor removes
@@ -304,7 +304,13 @@ silence → edge black frames are trimmed. It prints span / raw / final per clip
   and any black within 1s of an edge is cut away and re-encoded (the printed final duration
   reflects the fix). Suspect a black edge → verify with
   `ffmpeg -i CLIP -vf blackdetect=d=0.02 -f null -`, not by eyeballing frames.
-- Choppy / clipped words → raise `--margin` (0.4s). Breaths still audible → raise the
+- **`--margin` is padding, not trimming**: the cut still lands inside the detected
+  silence, and the margin decides how much silence is kept on each side. A 0.2s margin
+  therefore keeps every gap shorter than 0.4s intact — measured on one clip, 234 gaps of
+  0.25–0.45s (18% of the runtime) survived and the creator said "barely any breaths
+  removed". **Default 0.15s.** 0.1s is tighter but can clip soft word onsets
+  (media/speech drops from ~90% to ~88%); do not ship it as a default.
+- Choppy / clipped words → raise `--margin` (0.2–0.4s). Breaths still audible → raise the
   threshold via `--edit "audio:threshold=..."`.
 - Long sources are slow: `--dry-run` first, then run the real batch as a background task and
   watch the output directory.
