@@ -77,7 +77,7 @@ subprocess.run([exe, "-ex", draft, "-o", str(out_dir / f"{name}.mp4"), ...])
 批量默认验收：
 
 1. `check_preset.py` 对每条草稿 PASS（画布/倍速/调色/模糊/字幕/标题/转场贴纸）。
-2. 字幕：0 重叠、每条 ≤ 10–12 字、0 空文本、起止不越界。
+2. 字幕：0 重叠、每条 ≤ 11 字、0 空文本、起止不越界。
 3. 事件：每个 `at` 必须落在某个 keep segment 内；输出时间不得为 0 或超出成片时长。
 4. 工程：时间线顺序、`draft_content.json` 的 `id` 与 `project.json` 条目一致、时间线01未动。
 5. 导出：第一条完整 `ffprobe` + `volumedetect` + `blackdetect` + 抽帧；其余抽 1 条。

@@ -3,7 +3,7 @@
 
 Keeps video cuts, titles, effects and SFX unchanged; only rebuilds the subtitle
 track with the fixed slice-edit style and the current subtitle rules:
-proofread -> collapse repeats -> merge short pauses/fillers -> split <=12 chars
+proofread -> collapse repeats -> merge short pauses/fillers -> split <=11 chars
 -> zero-gap timing -> fixed font/size/color/position.
 """
 from __future__ import annotations
@@ -17,8 +17,8 @@ import uuid
 from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-MAX_CHARS = 12          # 软目标：优先在这个长度以内断
-MAX_CHARS_HARD = 14     # 硬上限：超过才强制拆
+MAX_CHARS = 11          # 软目标：优先在这个长度以内断（2026-11-18 用户改：一行最多 11 字）
+MAX_CHARS_HARD = 11     # 硬上限：超过才强制拆（同日改：硬上限也收到 11）
 FILLERS = set("呃啊唉哦嗯呀嘛哈哎")
 FUNC = set("的地得了着过和与或而但就也还又才都把被给对在从向为以于跟同吗呢吧啊呀嘛")
 REPEAT_TOKENS = ["我", "你", "他", "她", "它", "这个", "那个", "就是", "然后", "所以", "但是",
@@ -342,7 +342,7 @@ def split_text(text: str) -> list[str]:
             continue  # never cut immediately before these
         bounds.append(p)
     if bounds:
-        target = min(MAX_CHARS, max(6, len(text) - 4))   # 仍以 12 为目标，14 才兜底
+        target = min(MAX_CHARS, max(6, len(text) - 4))   # 仍以 11 为目标
         clause = set("刚后然但所因不其我你他她这那就都也还又才")
         def penalty(p: int) -> int:
             s = abs(p - target)

@@ -33,7 +33,7 @@
 - 位置：y≈**-0.236**
 - 阴影 alpha 0.9；描边 0.08
 - 单行；`line_max_width` 1.0，`force_apply_line_max_width` true
-- 长句上限 **12 字**；按词边界拆两条
+- 长句上限 **11 字**；按词边界拆两条
 - 句间 0 缝（上一条 end = 下一条 start），最多留 1.0s；靠 start 取整防 30fps 同帧叠字
 
 ## 5. 标题

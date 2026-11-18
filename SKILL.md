@@ -453,8 +453,8 @@ Two traps when auditing the library:
 | Canvas | 1080×1920 vertical |
 | Colour | every adjustment sub-item at **0.8**, on each video segment |
 | Top blur | blur + rectangular mask, height ≈14.6%, centre Y ≈0.70; covers only the upper strip, hiding the source's burned-in title |
-| Subtitles | thin Source Han Sans, size **12**, `#FFFFFF`, y ≈ −0.236, shadow 0.9, single line |
-| Titles | a heavy display face, white, sizes 13/12, y ≈ 0.7446 / 0.6231, two lines |
+| Subtitles | thin Source Han Sans, size **12**, `#FFFFFF`, y ≈ −0.236, shadow 0.9, single line, **≤11 characters** |
+| Titles | a heavy display face, white, **size 13** on both lines, y ≈ 0.7446 / 0.6231, **≤9 characters per line** |
 | Transitions / stickers / BGM / keyframes | **none** |
 | Track order | video → vignette/zoom → blur → titles → audio → subtitles (subtitles above the blur) |
 
