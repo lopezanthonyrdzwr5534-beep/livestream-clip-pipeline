@@ -368,12 +368,17 @@ def main() -> int:
     sub_track["segments"] = new_subs
 
     # titles
+    # preset.title.sizes 要逐行套上：模板自带两行可能是 13/12，不套就会回落到模板字号。
     title_mats = [m for m in mats.get("texts", []) if m.get("type") == "text"]
-    for mat, text in zip(title_mats, edl.get("titles", [])[:2]):
+    title_sizes = ((preset.get("title") or {}).get("sizes") or [])
+    for i, (mat, text) in enumerate(zip(title_mats, edl.get("titles", [])[:2])):
         obj = load_text(mat)
         obj["text"] = text
         if obj.get("styles"):
             obj["styles"][0]["range"] = [0, len(text)]
+            if i < len(title_sizes):
+                for st in obj["styles"]:
+                    st["size"] = float(title_sizes[i])
         mat["content"] = json.dumps(obj, ensure_ascii=False)
         mat["recognize_text"] = text
     for t in template["tracks"]:
